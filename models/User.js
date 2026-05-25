@@ -46,6 +46,7 @@ const userSchema = new mongoose.Schema(
     resumeUrl: String,
     isVerified: { type: Boolean, default: false },
     isBlocked: { type: Boolean, default: false },
+    blockedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   },
   { timestamps: true }
 );

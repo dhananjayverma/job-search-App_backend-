@@ -1,6 +1,7 @@
 const express = require('express');
 const { Conversation, Message } = require('../models/Message');
 const Notification = require('../models/Notification');
+const User = require('../models/User');
 
 const router = express.Router();
 
@@ -36,21 +37,40 @@ router.post('/conversations', async (req, res, next) => {
       return res.status(400).json({ error: 'participantOne and participantTwo are required' });
     }
 
+    const [p1BlocksP2, p2BlocksP1] = await Promise.all([
+      User.findOne({ _id: participantOne, blockedUsers: participantTwo }).select('_id'),
+      User.findOne({ _id: participantTwo, blockedUsers: participantOne }).select('_id'),
+    ]);
+    const blockedBy = p1BlocksP2?._id || p2BlocksP1?._id || null;
+
     const existingConversation = await Conversation.findOne({
       $or: [
         { participantOne, participantTwo },
         { participantOne: participantTwo, participantTwo: participantOne },
       ],
       ...(jobId ? { jobId } : {}),
-    })
-      .populate('participantOne participantTwo', '-password')
-      .populate('jobId');
+    });
 
-    if (existingConversation) {
-      return res.json(existingConversation);
+    if (existingConversation && String(existingConversation.blockedBy || '') !== String(blockedBy || '')) {
+      existingConversation.blockedBy = blockedBy;
+      existingConversation.blockedAt = blockedBy ? new Date() : null;
+      await existingConversation.save();
     }
 
-    const conversation = await Conversation.create({ participantOne, participantTwo, jobId });
+    if (existingConversation) {
+      const populatedExistingConversation = await Conversation.findById(existingConversation._id)
+        .populate('participantOne participantTwo', '-password')
+        .populate('jobId');
+      return res.json(populatedExistingConversation);
+    }
+
+    const conversation = await Conversation.create({
+      participantOne,
+      participantTwo,
+      jobId,
+      blockedBy,
+      blockedAt: blockedBy ? new Date() : null,
+    });
     const fullConversation = await Conversation.findById(conversation._id)
       .populate('participantOne participantTwo', '-password')
       .populate('jobId');
@@ -79,6 +99,20 @@ router.post('/conversations/:conversationId', async (req, res, next) => {
     if (!conversationCheck) {
       return res.status(404).json({ error: 'Conversation not found' });
     }
+    const participantOneId = conversationCheck.participantOne?.toString();
+    const participantTwoId = conversationCheck.participantTwo?.toString();
+    const [p1BlocksP2, p2BlocksP1] = await Promise.all([
+      User.findOne({ _id: participantOneId, blockedUsers: participantTwoId }).select('_id'),
+      User.findOne({ _id: participantTwoId, blockedUsers: participantOneId }).select('_id'),
+    ]);
+    const blocker = p1BlocksP2 || p2BlocksP1;
+
+    if (String(conversationCheck.blockedBy || '') !== String(blocker?._id || '')) {
+      conversationCheck.blockedBy = blocker?._id || null;
+      conversationCheck.blockedAt = blocker ? new Date() : null;
+      await conversationCheck.save();
+    }
+
     if (conversationCheck.blockedBy) {
       return res.status(403).json({ error: 'Chat is blocked in this conversation' });
     }
@@ -145,12 +179,18 @@ router.patch('/conversations/:conversationId/block', async (req, res, next) => {
     const conversation = await Conversation.findById(req.params.conversationId).populate('participantOne participantTwo', '-password');
     if (!conversation) return res.status(404).json({ error: 'Conversation not found' });
 
+    const participantOneId = conversation.participantOne?._id?.toString();
+    const participantTwoId = conversation.participantTwo?._id?.toString();
+    const otherUserId = participantOneId === userId ? participantTwoId : participantOneId;
+
     if (blocked) {
+      await User.findByIdAndUpdate(userId, { $addToSet: { blockedUsers: otherUserId } });
       conversation.blockedBy = userId;
       conversation.blockedAt = new Date();
     } else if (conversation.blockedBy && conversation.blockedBy.toString() !== userId) {
       return res.status(403).json({ error: 'Only the user who blocked can unblock' });
     } else if (conversation.blockedBy?.toString() === userId) {
+      await User.findByIdAndUpdate(userId, { $pull: { blockedUsers: otherUserId } });
       conversation.blockedBy = null;
       conversation.blockedAt = null;
     }
