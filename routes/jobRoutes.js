@@ -110,10 +110,19 @@ router.get('/:id', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
   try {
-    const { recruiterId, companyId, title, description, experienceMin } = req.body;
+    const {
+      recruiterId,
+      companyId,
+      title,
+      description,
+      experienceMin,
+      contactEmail,
+      contactPhone,
+      address,
+    } = req.body;
 
-    if (!recruiterId || !companyId || !title || !description) {
-      return res.status(400).json({ error: 'recruiterId, companyId, title, and description are required' });
+    if (!recruiterId || !companyId || !title || !description || !contactEmail || !contactPhone || !address) {
+      return res.status(400).json({ error: 'recruiterId, companyId, title, description, contactEmail, contactPhone, and address are required' });
     }
     if (experienceMin === undefined || experienceMin === null || Number.isNaN(Number(experienceMin))) {
       return res.status(400).json({ error: 'experienceMin is required (use 0 for fresher roles)' });
