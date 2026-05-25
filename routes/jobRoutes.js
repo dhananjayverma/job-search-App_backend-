@@ -55,7 +55,9 @@ router.get('/', async (req, res, next) => {
 
 router.get('/companies', async (req, res, next) => {
   try {
-    const companies = await Company.find().sort({ name: 1 });
+    const query = {};
+    if (req.query.ownerId) query.ownerId = req.query.ownerId;
+    const companies = await Company.find(query).sort({ createdAt: -1 });
     res.json(companies);
   } catch (error) {
     next(error);
