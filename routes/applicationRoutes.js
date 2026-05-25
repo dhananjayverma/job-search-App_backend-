@@ -1,6 +1,7 @@
 const express = require('express');
 const Application = require('../models/Application');
 const Job = require('../models/Job');
+const { Conversation } = require('../models/Message');
 
 const router = express.Router();
 
@@ -54,6 +55,24 @@ router.patch('/:id', async (req, res, next) => {
   try {
     const application = await Application.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!application) return res.status(404).json({ error: 'Application not found' });
+
+    if (req.body.status === 'rejected') {
+      const query = {
+        $or: [
+          { participantOne: application.applicantId, participantTwo: application.recruiterId },
+          { participantOne: application.recruiterId, participantTwo: application.applicantId },
+        ],
+      };
+      if (application.jobId) query.jobId = application.jobId;
+
+      const conversation = await Conversation.findOne(query);
+      if (conversation) {
+        conversation.blockedBy = application.recruiterId;
+        conversation.blockedAt = new Date();
+        await conversation.save();
+      }
+    }
+
     res.json(application);
   } catch (error) {
     next(error);

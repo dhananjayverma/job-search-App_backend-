@@ -108,10 +108,13 @@ router.get('/:id', async (req, res, next) => {
 
 router.post('/', async (req, res, next) => {
   try {
-    const { recruiterId, companyId, title, description } = req.body;
+    const { recruiterId, companyId, title, description, experienceMin } = req.body;
 
     if (!recruiterId || !companyId || !title || !description) {
       return res.status(400).json({ error: 'recruiterId, companyId, title, and description are required' });
+    }
+    if (experienceMin === undefined || experienceMin === null || Number.isNaN(Number(experienceMin))) {
+      return res.status(400).json({ error: 'experienceMin is required (use 0 for fresher roles)' });
     }
 
     const [recruiter, company] = await Promise.all([
@@ -122,7 +125,14 @@ router.post('/', async (req, res, next) => {
     if (!recruiter) return res.status(404).json({ error: 'Recruiter not found' });
     if (!company) return res.status(404).json({ error: 'Company not found' });
 
-    const job = await Job.create(req.body);
+    const job = await Job.create({
+      ...req.body,
+      experienceMin: Number(experienceMin),
+      experienceMax:
+        req.body.experienceMax === undefined || req.body.experienceMax === null || req.body.experienceMax === ''
+          ? null
+          : Number(req.body.experienceMax),
+    });
     res.status(201).json(await job.populate(populateJob));
   } catch (error) {
     next(error);

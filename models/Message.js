@@ -5,6 +5,9 @@ const conversationSchema = new mongoose.Schema(
     participantOne: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     participantTwo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     jobId: { type: mongoose.Schema.Types.ObjectId, ref: 'Job' },
+    blockedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    blockedAt: { type: Date, default: null },
+    archivedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     lastMessageAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

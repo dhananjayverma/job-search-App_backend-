@@ -10,6 +10,14 @@ router.get('/conversations', async (req, res, next) => {
       ? { $or: [{ participantOne: req.query.userId }, { participantTwo: req.query.userId }] }
       : {};
 
+    if (req.query.userId) {
+      if (req.query.archived === 'true') {
+        query.archivedBy = req.query.userId;
+      } else if (req.query.includeArchived !== 'true') {
+        query.archivedBy = { $ne: req.query.userId };
+      }
+    }
+
     const conversations = await Conversation.find(query)
       .populate('participantOne participantTwo', '-password')
       .populate('jobId')
@@ -67,6 +75,14 @@ router.get('/conversations/:conversationId', async (req, res, next) => {
 router.post('/conversations/:conversationId', async (req, res, next) => {
   try {
     const io = req.app.get('io');
+    const conversationCheck = await Conversation.findById(req.params.conversationId);
+    if (!conversationCheck) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+    if (conversationCheck.blockedBy) {
+      return res.status(403).json({ error: 'Chat is blocked in this conversation' });
+    }
+
     const message = await Message.create({
       ...req.body,
       conversationId: req.params.conversationId,
@@ -117,6 +133,126 @@ router.post('/conversations/:conversationId', async (req, res, next) => {
     }
 
     res.status(201).json(fullMessage);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch('/conversations/:conversationId/block', async (req, res, next) => {
+  try {
+    const { userId, blocked } = req.body;
+    const io = req.app.get('io');
+    const conversation = await Conversation.findById(req.params.conversationId).populate('participantOne participantTwo', '-password');
+    if (!conversation) return res.status(404).json({ error: 'Conversation not found' });
+
+    if (blocked) {
+      conversation.blockedBy = userId;
+      conversation.blockedAt = new Date();
+    } else if (conversation.blockedBy && conversation.blockedBy.toString() !== userId) {
+      return res.status(403).json({ error: 'Only the user who blocked can unblock' });
+    } else if (conversation.blockedBy?.toString() === userId) {
+      conversation.blockedBy = null;
+      conversation.blockedAt = null;
+    }
+
+    await conversation.save();
+
+    if (io) {
+      io.to(`conversation:${req.params.conversationId}`).emit('conversation:blocked', {
+        conversationId: req.params.conversationId,
+        blockedBy: conversation.blockedBy,
+      });
+      io.to(`user:${conversation.participantOne._id}`).emit('conversation:updated', conversation);
+      io.to(`user:${conversation.participantTwo._id}`).emit('conversation:updated', conversation);
+    }
+
+    res.json(conversation);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch('/conversations/:conversationId/archive', async (req, res, next) => {
+  try {
+    const { userId, archived } = req.body;
+    const io = req.app.get('io');
+    const conversation = await Conversation.findById(req.params.conversationId)
+      .populate('participantOne participantTwo', '-password');
+
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const participantOneId = conversation.participantOne?._id?.toString();
+    const participantTwoId = conversation.participantTwo?._id?.toString();
+    const isParticipant = userId && [participantOneId, participantTwoId].includes(userId.toString());
+
+    if (!isParticipant) {
+      return res.status(403).json({ error: 'You are not allowed to archive this conversation' });
+    }
+
+    if (!Array.isArray(conversation.archivedBy)) {
+      conversation.archivedBy = [];
+    }
+
+    const alreadyArchived = conversation.archivedBy.some((id) => id.toString() === userId.toString());
+    if (archived && !alreadyArchived) {
+      conversation.archivedBy.push(userId);
+    }
+    if (!archived && alreadyArchived) {
+      conversation.archivedBy = conversation.archivedBy.filter((id) => id.toString() !== userId.toString());
+    }
+
+    await conversation.save();
+
+    if (io) {
+      io.to(`user:${participantOneId}`).emit('conversation:updated', conversation);
+      io.to(`user:${participantTwoId}`).emit('conversation:updated', conversation);
+    }
+
+    res.json(conversation);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete('/conversations/:conversationId', async (req, res, next) => {
+  try {
+    const { userId } = req.body;
+    const io = req.app.get('io');
+    const conversation = await Conversation.findById(req.params.conversationId)
+      .populate('participantOne participantTwo', '-password');
+
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const participantOneId = conversation.participantOne?._id?.toString();
+    const participantTwoId = conversation.participantTwo?._id?.toString();
+    const isParticipant = userId && [participantOneId, participantTwoId].includes(userId.toString());
+
+    if (!isParticipant) {
+      return res.status(403).json({ error: 'You are not allowed to delete this conversation' });
+    }
+
+    await Message.deleteMany({ conversationId: req.params.conversationId });
+    await Conversation.findByIdAndDelete(req.params.conversationId);
+
+    if (io) {
+      io.to(`conversation:${req.params.conversationId}`).emit('conversation:deleted', {
+        conversationId: req.params.conversationId,
+      });
+      io.to(`user:${participantOneId}`).emit('conversation:deleted', {
+        conversationId: req.params.conversationId,
+      });
+      io.to(`user:${participantTwoId}`).emit('conversation:deleted', {
+        conversationId: req.params.conversationId,
+      });
+      io.to(`user:${participantOneId}`).emit('conversation:updated');
+      io.to(`user:${participantTwoId}`).emit('conversation:updated');
+    }
+
+    res.json({ message: 'Conversation deleted' });
   } catch (error) {
     next(error);
   }
